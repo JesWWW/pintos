@@ -93,7 +93,7 @@ static void start_process (void *file_name_)
   {
     /* If load failed, quit. */
     thread_exit ();
-  }
+  }92
 
   free(fn_copy);
   

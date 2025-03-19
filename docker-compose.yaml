@@ -2,12 +2,13 @@ version: '3.8'
 
 services:
   pintos:
+    platform: linux/amd64
     image: davidchen871/pintos
     container_name: pintos
     stdin_open: true  
     tty: true         
     restart: no       
-    #volumes:
-    # - [your_source_code_path]:/home/pintos
+    volumes:
+     - /Users/jeswww/Documents/Operating System/OS-lab/pintos:/home/pintos
     environment:
       - PINTOS_DIR=/home/pintos

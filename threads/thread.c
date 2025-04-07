@@ -11,6 +11,8 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
+#include <filesys/file.h>
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -36,6 +38,9 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+
+/* Lock used by process */
+static struct lock lock_f;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
@@ -71,6 +76,15 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+void create_lock ()
+{
+  lock_acquire(&lock_f);
+}
+
+void end_lock ()
+{
+  lock_release(&lock_f);
+}
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -93,6 +107,7 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
 
+  lock_init (&lock_f);
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -182,6 +197,16 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+
+  /* OS Lab01: Initialize child thread*/
+  t->thread_child = malloc(sizeof(struct child));
+  t->thread_child->tid = tid;
+  sema_init (&t->thread_child->sema, 0);
+  list_push_back (&thread_current()->childs, &t->thread_child->child_element);
+  /* Initialize the  exit status by the MAX
+      Fix Bug */
+  t->thread_child->store_exit = UINT32_MAX;
+  t->thread_child->isrun = false;
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -290,6 +315,32 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
+
+  /*Print the thread information when we exit  */
+  printf ("%s: exit(%d)\n",thread_name(), thread_current()->status_exit);
+
+  /*After process_wait sema up and return resource to parent thread*/
+  thread_current ()->thread_child->store_exit = thread_current()->status_exit;
+  sema_up (&thread_current()->thread_child->sema);
+
+  /*Close owned files*/
+  file_close (thread_current ()->file_owned);
+
+  /*Close all the files*/
+  struct list_elem *e;
+  struct list *files = &thread_current()->files;
+  while(!list_empty (files))
+  {
+    e = list_pop_front (files);
+    struct thread_file *f = list_entry (e, struct thread_file, file_element);
+    create_lock ();
+    file_close (f->file);
+    end_lock ();
+    list_remove (e);
+    /*Free the resource the file obtain*/
+    free (f);
+  }
+
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
@@ -463,6 +514,20 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  /*OS Lab 01*/
+  /*File system*/
+  t->magic = THREAD_MAGIC;
+  t->file_fd=2;
+  /* Initialization for parent child lists */
+  if (t==initial_thread) t->parent=NULL;
+  else t->parent = thread_current ();
+  list_init (&t->childs);
+  list_init (&t->files);
+  sema_init (&t->sema, 0);
+  t->success = true;
+  t->status_exit = UINT32_MAX;
+  t->file_fd = 2;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);

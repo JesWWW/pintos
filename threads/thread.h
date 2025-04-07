@@ -4,6 +4,9 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <threads/synch.h>
+#include <stdbool.h>
+
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -24,6 +27,22 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+/*child process*/
+struct child
+  {
+    tid_t tid;                           /* tid of the thread */
+    bool isrun;                          /* whether the child's thread is run successfully */
+    struct list_elem child_element;         /* list of children */
+    struct semaphore sema;               /* semaphore to control waiting */
+    int store_exit;                      /* the exit status of child thread */
+  };
+/* Structure of File that thread open */
+struct thread_file
+  {
+    int fd; //file descriptor
+    struct file* file;
+    struct list_elem file_element; //list element
+  };
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -93,7 +112,19 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-#ifdef USERPROG
+    /*Code we added for OS Lab 01 */
+    int status_exit; //record the exit status
+    struct list childs;                 
+    struct child * thread_child;        /* Store the child of this thread */
+    struct semaphore sema;             
+    bool success;                       
+    struct thread* parent;              
+    /*For File System*/
+    struct list files;                  
+    int file_fd;                        
+    struct file * file_owned;           
+    struct file *exec_file;  
+    #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
 #endif
@@ -106,7 +137,8 @@ struct thread
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
+void create_lock(void);
+void end_lock(void);
 void thread_init (void);
 void thread_start (void);
 

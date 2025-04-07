@@ -30,8 +30,12 @@ static void push_argument(void **esp, char *cmdline);
 tid_t
 process_execute (const char *file_name) 
 {
+  if (file_name == NULL)
+    return TID_ERROR;
+
   char *fn_copy, *fn_copy2;
   tid_t tid;
+
 
   /* Make a copy of FILE_NAME.
     Otherwise there's a race between the caller and load(). */
@@ -46,9 +50,13 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   char *save_ptr;
-  fn_copy = strtok_r(fn_copy, " ", &save_ptr);
+  fn_copy = strtok_r(fn_copy, " ", &save_ptr);//This is thread_name
 
-  tid = thread_create(fn_copy, PRI_DEFAULT, start_process, fn_copy2);
+  struct file *file = filesys_open(file_name);
+  if (file != NULL) {
+      file_deny_write(file);
+  }
+  tid = thread_create(fn_copy, PRI_DEFAULT, start_process, fn_copy2);//create child thread
   free(fn_copy);
 
   if (tid == TID_ERROR){
@@ -56,25 +64,109 @@ process_execute (const char *file_name)
     return TID_ERROR;
   }
 
+  /* Sema down the parent process, waiting for child thread*/
+  sema_down(&thread_current()->sema);
+  if (!thread_current()->success) return TID_ERROR;
+
   return tid;
 }
 
 // lab01 Hint - This is the mainly function you have to trace.
-static void push_argument(void **esp, char *cmdline)
-{
+static void push_argument(void **esp, char *cmdline) {
+  char *argv[128];  // Store parsed arguments
+  int argc = 0;      // Argument count
+  char *token, *save_ptr;
 
+  // Tokenize cmdline 
+  for (token = strtok_r(cmdline, " ", &save_ptr); 
+      token != NULL; 
+      token = strtok_r(NULL, " ", &save_ptr)) 
+    {
+      argv[argc++] = token;
+      if (argc >= 128) {
+      printf("Too many arguments!\n");
+      thread_exit();
+      }
+    }
+
+  if (argc == 0) {
+    *esp -= sizeof(char *);
+    *(char **)(*esp) = NULL;  // Push null argv[0]
+    return;
+  }
+
+  // Push argument strings onto the stack 
+  char **arg_addr = malloc(argc * sizeof(char *));
+  if (!arg_addr) {
+    printf("Memory allocation failed!\n");
+    thread_exit();
+}
+  for (int i = argc - 1; i >= 0; i--) {
+      int len = strlen(argv[i]) + 1;  // Include null terminator
+      *esp -= len;
+      memcpy(*esp, argv[i], len);
+      arg_addr[i] = *esp;  // Store stack address of argument
+  }
+  
+  // Word-align 
+  while ((uintptr_t)(*esp) % 4 != 0) {
+      *esp -= 1;
+      *(uint8_t *)(*esp) = 0;
+  }
+
+  // Push null sentinel for argv[argc]
+  *esp -= sizeof(char *);
+  *(char **)(*esp) = NULL;
+
+  // Push addresses 
+  for (int i = argc - 1; i >= 0; i--) {
+      *esp -= sizeof(char *);
+      *(char **)(*esp) = arg_addr[i];
+  }
+
+  // Store argv's address 
+  char **argv_addr = (char **)(*esp);
+  *esp -= sizeof(char **);
+  *(char ***)(*esp) = argv_addr;
+
+  // Store argc
+  *esp -= sizeof(int);
+  *(int *)(*esp) = argc;
+
+  // Store fake return address (NULL)
+  *esp -= sizeof(void *);
+  *(void **)(*esp) = NULL;
+  free(arg_addr);
+  //hex_dump((uintptr_t)*esp, *esp, (unsigned) (PHYS_BASE - (uintptr_t)*esp), true);
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *cmdline = file_name_; //This is fn_copy2 from process_execute
   struct intr_frame if_;
   bool success;
 
-  char *fn_copy = malloc(strlen(file_name) + 1);
-  strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+  /* copy cmdline for the first token*/
+  char *cmdline_copy = malloc(strlen(cmdline) + 1);
+  if (!cmdline_copy) {
+    thread_current()->parent->success = false;
+    sema_up(&thread_current()->parent->sema);
+    thread_exit();
+  }
+  strlcpy(cmdline_copy, cmdline, strlen(cmdline) + 1);
+
+
+  char *save_ptr;
+  char *file_name = strtok_r(cmdline_copy, " ", &save_ptr);
+  if (file_name == NULL) {
+    /* if no token */
+    free(cmdline_copy);
+    thread_current()->parent->success = false;
+    sema_up(&thread_current()->parent->sema);
+    thread_exit();
+  }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -83,19 +175,26 @@ static void start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
 
 
-  char *save_ptr;
-  file_name = strtok_r(file_name, " ", &save_ptr);
+
   success = load (file_name, &if_.eip, &if_.esp);
   if(success)
   {
-    push_argument (&if_.esp, fn_copy);
+    push_argument (&if_.esp, cmdline);
+    /* Record the exec_status of the parent thread's success and sema up parent's semaphore */
+    thread_current ()->parent->success = true;
+    sema_up (&thread_current ()->parent->sema);
   }else
   {
     /* If load failed, quit. */
+    thread_current ()->parent->success = false;
+    sema_up (&thread_current ()->parent->sema);
+    free(cmdline_copy);
+    free(cmdline);
     thread_exit ();
-  }92
+  };
 
-  free(fn_copy);
+  free(cmdline_copy);
+  free(cmdline);
   
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -118,11 +217,39 @@ static void start_process (void *file_name_)
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-   int
-   process_wait (tid_t child_tid UNUSED) 
-   {
-     return -1;
-   }
+int
+process_wait (tid_t child_tid UNUSED) 
+{
+  
+  struct list *curr = &thread_current()->childs;
+  struct list_elem *childs_p = list_begin (curr);
+  struct child *temp = NULL;
+  while (childs_p != list_end (curr))//go through all the child lists process
+  {
+      temp = list_entry (childs_p, struct child, child_element);//把child_elem的指针变成child的指针
+      if (temp->tid == child_tid)
+      {
+        if (!temp->isrun)
+        {
+          temp->isrun = true;
+          sema_down (&temp->sema);
+          break;
+        } 
+        else 
+        {
+          return -1;
+        }
+      }
+      childs_p = list_next (childs_p);
+  }
+  if (childs_p == list_end (curr)) {
+      return -1;
+  }
+  
+    list_remove (childs_p);//delete child process
+    return temp->store_exit;//child exit
+}
+   
 
 /* Free the current process's resources. */
 void
@@ -131,6 +258,12 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  /*Important to pass rox*/
+  if (cur->exec_file != NULL) {
+  file_allow_write(cur->exec_file);
+  file_close(cur->exec_file);
+  cur->exec_file = NULL;
+  }
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -262,6 +395,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       goto done; 
     }
 
+
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -339,6 +473,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
+  success = true;
+  t->exec_file = file;
+  file_deny_write(file);
+
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
@@ -346,7 +484,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  if (!success && file != NULL)
+    file_close(file);
   return success;
 }
 

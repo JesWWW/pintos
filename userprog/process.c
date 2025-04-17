@@ -226,7 +226,7 @@ process_wait (tid_t child_tid UNUSED)
   struct child *temp = NULL;
   while (childs_p != list_end (curr))//go through all the child lists process
   {
-      temp = list_entry (childs_p, struct child, child_element);//把child_elem的指针变成child的指针
+      temp = list_entry (childs_p, struct child, child_element);
       if (temp->tid == child_tid)
       {
         if (!temp->isrun)

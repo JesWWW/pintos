@@ -199,14 +199,14 @@ thread_create (const char *name, int priority,
   tid = t->tid = allocate_tid ();
 
   /* OS Lab01: Initialize child thread*/
-  t->thread_child = malloc(sizeof(struct child));
-  t->thread_child->tid = tid;
-  sema_init (&t->thread_child->sema, 0);
-  list_push_back (&thread_current()->childs, &t->thread_child->child_element);
+  //t->thread_child = malloc(sizeof(struct child));
+  //t->thread_child->tid = tid;
+  //sema_init (&t->thread_child->sema, 0);
+  //list_push_back (&thread_current()->childs, &t->thread_child->child_element);
   /* Initialize the  exit status by the MAX
       Fix Bug */
-  t->thread_child->store_exit = UINT32_MAX;
-  t->thread_child->isrun = false;
+  //t->thread_child->store_exit = UINT32_MAX;
+  //t->thread_child->isrun = false;
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -317,29 +317,29 @@ thread_exit (void)
   intr_disable ();
 
   /*Print the thread information when we exit  */
-  printf ("%s: exit(%d)\n",thread_name(), thread_current()->status_exit);
+  //printf ("%s: exit(%d)\n",thread_name(), thread_current()->status_exit);
 
   /*After process_wait sema up and return resource to parent thread*/
-  thread_current ()->thread_child->store_exit = thread_current()->status_exit;
-  sema_up (&thread_current()->thread_child->sema);
+  //thread_current ()->thread_child->store_exit = thread_current()->status_exit;
+  //sema_up (&thread_current()->thread_child->sema);
 
   /*Close owned files*/
-  file_close (thread_current ()->file_owned);
+  //file_close (thread_current ()->file_owned);
 
   /*Close all the files*/
-  struct list_elem *e;
-  struct list *files = &thread_current()->files;
-  while(!list_empty (files))
-  {
-    e = list_pop_front (files);
-    struct thread_file *f = list_entry (e, struct thread_file, file_element);
-    create_lock ();
-    file_close (f->file);
-    end_lock ();
-    list_remove (e);
+  //struct list_elem *e;
+  //struct list *files = &thread_current()->files;
+  //while(!list_empty (files))
+  //{
+    //e = list_pop_front (files);
+    //struct thread_file *f = list_entry (e, struct thread_file, file_element);
+    //create_lock ();
+    //file_close (f->file);
+    //end_lock ();
+    //list_remove (e);
     /*Free the resource the file obtain*/
-    free (f);
-  }
+    //free (f);
+  //}
 
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -552,13 +552,20 @@ alloc_frame (struct thread *t, size_t size)
    empty.  (If the running thread can continue running, then it
    will be in the run queue.)  If the run queue is empty, return
    idle_thread. */
+bool thread_priority_cmp (const struct list_elem *a,const struct list_elem *b,void *aux UNUSED){
+     return list_entry(a,struct thread,elem)->priority < list_entry(b,struct thread,elem)->priority;
+   }
+
 static struct thread *
 next_thread_to_run (void) 
 {
   if (list_empty (&ready_list))
     return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    else {
+      struct list_elem *max_priority = list_max (&ready_list, thread_priority_cmp, NULL);
+      list_remove (max_priority);
+      return list_entry (max_priority, struct thread, elem);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page

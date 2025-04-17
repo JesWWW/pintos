@@ -227,7 +227,7 @@ process_wait (tid_t child_tid UNUSED)
   while (childs_p != list_end (curr))//go through all the child lists process
   {
       temp = list_entry (childs_p, struct child, child_element);
-      if (temp->tid == child_tid)
+     if (temp->tid == child_tid)
       {
         if (!temp->isrun)
         {
